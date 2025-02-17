@@ -1,0 +1,179 @@
+---
+title: "Census Data Access"
+author: "Sheridamae Bondoc Gudez, M.S."
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=F}
+knitr::opts_chunk$set(echo = FALSE, message=T, warning=T)
+rm(list=ls())
+#Read in installed package list
+libraries <- c("tidyverse", "tidycensus", "sf", "tigris", "sp", "knitr")
+for (i in libraries){
+  tryCatch(library(i, character.only = TRUE),
+           print(paste(i, "installed")),
+           error = function(e) {install.packages(i);
+             library(i, character.only = TRUE)}
+  )
+  print(paste(i, "loaded"))
+}
+options(tigris_class = "sf")
+options(scipen = 999)
+```
+
+# Census API Key
+
+To access the US Census Database, you first must have a unique API key which you can request for free here: <https://api.census.gov/data/key_signup.html>
+
+An API key will then be emailed to you in a few hours to a few days, depending on how much traffic the site is getting.
+
+```{r api}
+census_api_key("api_key") #insert api key
+```
+
+# Getting ACS Codebook
+
+```{r acs_codes, echo= T}
+acs_variables <- load_variables(2020, "acs5", cache = TRUE) #pull codebook for the 5-year ACS database. Change year to desired timeframe (i.e., 2020 5-year ACS ranges from 2016 to 2020)
+```
+
+# Accessing Census Data and Creating Desired Variables
+
+## Custom Pull
+
+```{r}
+acs <- get_acs(geography = "tract", #unit of analysis (i.e, tract, county, block)
+                  year = 2020, #desired year
+                  variables = "variable_name" = "variable_code", #custom variable name and the variable code from the codebook
+                  state = "state_abv", #desired state
+                  county = "county_name", #desired county
+                  survey = "acs5", #desired census database, here we us 5-year ACS
+                  geometry = TRUE) %>% #allow for spatial data to be included
+                  select(-(moe)) %>%
+                  spread(key = variable, value = estimate)
+```
+
+## Common Community Research Variables
+
+```{r full_census}
+acs <- get_acs(geography = "tract", 
+                  year = 2020,
+                  variables = c(tpop= "B01003_001", #total population
+                                medinc= "B19013_001", #median income
+                                poverty= "B17001_001", #total under the poverty line
+                                assist= "B09010_002", #Total households with public assistance
+                                unply= "B23025_005", #total unemployed that are aged 16+
+                                civlbr= "B23025_003", #total civilian labor force
+                                hsnocomp= "B28006_002", #total who did not receive a high school degree
+                                totedu= "B23006_001", #total sample in educational attainment pop.
+                                homeown= "B07013_002", #total people in owner occupied houses
+                                tenure= "B25003_001", #total sample in tenure population for occupancy status
+                                rsyr= "B25039_001", #average move-in year of households
+                                totocc="B25002_001", #total sample of occupancy status pop.
+                                vac= "B25002_003", #total units reported vacant,
+                                singmm= "B19131_074", #total single mothers (no spouse present and with children under 18)
+                                white= "B03002_003", #total non-hispanic white pop.
+                                black= "B03002_004", #total non-hispanic black pop.
+                                asian= "B03002_006", #total non-hispanic asian pop.
+                                hisp= "B03002_012", #total hispanic pop.
+                                ntvam= "B03002_005", #total non-hispanic native american pop.
+                                pacif= "B03002_007", #total non-hispanic pacific islander pop.
+                                oth1= "B03002_008", #total of two or more races pop.
+                                oth2= "B03002_009", #total of some other race
+                                ntv_state= "B05001_002", #Total Native born in US
+                                ntv_ost= "B05001_003", #Total Native born in US territory
+                                ntv_out= "B05001_004", #Total Native born outside US to American parents
+                                fborn= "B05006_001", #total foreign born pop.
+                                m1517= "B01001_006", #total males 15-17
+                                m1819="B01001_007", #total males 18-19
+                                m20="B01001_008", #total males 20
+                                m21="B01001_009", #total males 21
+                                m2224="B01001_010", #total males 22-24
+                                f1517= "B01001_030", #total females 15-17
+                                f1819="B01001_031", #total females 18-19
+                                f20="B01001_032", #total females 20
+                                f21="B01001_033", #total females 21
+                                f2224="B01001_034" #total females 22-24
+                                ), 
+                  state = "state",
+                  county = "county_name",
+                  survey = "acs5",
+                  geometry = TRUE) %>%
+                  select(-(moe)) %>%
+                  spread(key = variable, value = estimate) %>%
+  #mutate variables to create desired measurements
+                  mutate(area_km2 = st_area(geometry) / 1e6,  # Area in square kilometers
+                         ppdense = as.numeric(tpop / area_km2),   # Population density (people per km²)
+                         pass= (assist/tpop), #Percent households on public assistance
+                         phsno= hsnocomp/tpop, #Percent without a high school diploma
+                         medinc_log= log(medinc), #median income (logged)
+                         oth= ntvam+pacif+oth1+oth2, #other pop.
+                         tpopr= white+black+ntvam+asian+hisp+oth, #total races pop.
+                         pwht= (white/tpopr), #percent white
+                         pblk=(black/tpopr), #percent black
+                         pasn=(asian/tpopr), #percent asian
+                         phisp= (hisp/tpopr), #percent hispanic
+                         poth= (oth/tpopr), #percent other
+                         p1524= ((m1517+m1819+m20+m21+m2224+f1517+f1819+f20+f21+f2224)/tpop), #percent aged 15-24
+                         pvac=(vac/totocc), #percent vacant units
+                         phmwn= (homeown/tenure), #percent homeowners
+                         puply= (unply/civlbr), #percent unemployed
+                         ppov= (poverty/tpop), #percent under the poverty line
+                         avgrs= abs((2020-rsyr)), #average tract residency length (present year-average year of residency)
+                         psinm= (singmm/tpop), #percent single mother
+                         pntv= (ntv_state+ntv_ost+ntv_out)/tpop, #Percent Native-Born Hispanics
+                         pfb= (fborn/tpop), #percent foreign born
+                         ) %>%
+  #filter GEOIDs and mutated variables                
+  select(c(
+                    GEOID, ppdense, tpop,
+                    pwht, pblk, pasn, phisp, poth, 
+                    white, black, asian, hisp, oth, 
+                    medinc_log, ppov, puply, phsno, pass, psinm, p1524, 
+                    pvac, phmwn, avgrs, homeown
+                    )) %>% 
+                  filter(tpop != 0) #removing units with no populations (i.e airports, parks)
+```
+
+# Clip Data for a Desired City
+
+```{r}
+pl <- places(state = "state", cb = TRUE, year=2020) # Bring in 2020 city boundary data. Change year if using a different version of the ACS data
+city <- filter(pl, grepl("city", NAME)) #filter specified city
+city_map <- st_intersection(acs, city) #Clip data using city boundary
+```
+
+# Saving Non-Spatial Dataframe and a Shapefile
+
+## Pre-Processing
+
+```{r}
+#setting up dataframe for further cleaning
+data <- as.data.frame(maps) #remove spatial element and convert to data frame
+data <- data %>% #remove geometry and other spatial variables
+  select(GEOID, ppdense, tpop, 
+                    pwht, pblk, pasn, phisp, poth, 
+                    white, black, asian, hisp, oth, 
+                    medinc_log, ppov, puply, phsno, pass, psinm, p1524, 
+                    pvac, phmwn, avgrs, homeown) #change variables to desired ones
+
+#setting up shapefile for mapping
+maps <- maps %>%
+  select(c(GEOID, geometry)) #remove all variables except for geometry and GEOIDs
+```
+
+## Saving
+
+```{r}
+write.csv(data, "data.csv") #save as .csv file 
+write_sf(maps, "maps.shp", delete_layer = T) #save shapefile and OVERWRITE previous one if detected using delete_layer=T
+```
+
+# References
+
+Pebesma, E., 2018. Simple Features for R: Standardized Support for Spatial Vector Data. The R Journal 10 (1), 439-446, <https://doi.org/10.32614/RJ-2018-009>
+
+Pebesma, E., & Bivand, R. (2023). Spatial Data Science: With Applications in R. Chapman and Hall/CRC. <https://doi.org/10.1201/9780429459016>
+
+Walker K, Herman M (2025). *tidycensus: Load US Census Boundary and Attribute Data as 'tidyverse' and 'sf'-Ready Data Frames*. R package version 1.7.1, <https://walker-data.com/tidycensus/>.
