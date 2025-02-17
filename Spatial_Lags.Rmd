@@ -1,0 +1,232 @@
+---
+title: "Spatial Autocorrelation and Spatial Lags"
+author: "Sheridamae Gudez"
+date: "02-07-2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message = T, warning = T, fig.keep = "as is")
+rm(list=ls()) #clear environment
+libraries <- c("tidyverse", "stats", "sf", "tigris", "tmap", "sp", "spdep",
+               "spatialreg", "knitr") #desired packages
+
+for (i in libraries){ #load packages
+  tryCatch(library(i, character.only = TRUE),
+           print(paste(i, "installed")),
+           error = function(e) {install.packages(i);
+             library(i, character.only = TRUE)}
+  )
+  print(paste(i, "loaded"))
+} 
+options(scipen = 999)
+options(tigris_class = "sf")
+```
+
+# Data
+
+```{r data}
+MAPS <- st_read("MAPS.shp", stringsAsFactors = FALSE) #read-in base-layer geometry
+data <- st_read("data.shp", stringsAsFactors = FALSE) #read-in data table with geometry
+centroids <- st_centroid(st_geometry(MAPS)) #create point coords of tract centroids
+```
+
+# Neighbor Connectivity and Distance Matrix
+
+To establish a neighbor list for further spatial analysis, there are two most common methods: polygon-based neighbors and distance-based neighbors. Choose either depending on the structure of your data.
+
+## Construct Neighbors from Polygons
+
+Per spdep documentation:
+
+"The function builds a neighbours list based on regions with contiguous boundaries, that is sharing one or more boundary point. The current function is in part interpreted and may run slowly for many regions or detailed boundaries, but from 0.2-16 should not fail because of lack of memory when single polygons are built of very many border coordinates."
+
+```{r nb_polygons}
+nb <- poly2nb(data, queen=T) #determining neighbor connectivity using a Queen adjacency method, for rook adjacency use rook = T
+summary(nb) #check to make sure output looks right
+#create neighbor weights:
+nbw <- nb2listw(nb, style="W", zero.policy = T) #set summary method with style. "W" = row standardized (sums over all links to n) #zero.policy= T, weights vectors of zero length are inserted for regions without neighbour in the neighbours list
+
+#visualize neighbor adjacency matrix
+plot(st_geometry(MAPS), border = "black", reset = FALSE) #visualize distance network over geography
+plot(nb, coords = centroids, add=T, col = "red") #red lines indicate that census tracts are neighbors
+```
+
+## Construct Neighbors Using Distance
+
+Per spdep documentation:
+
+"The function identifies neighbours of region points by Euclidean distance in the metric of the points between lower (greater than or equal to (changed from version 1.1-7)) and upper (less than or equal to) bounds, or with longlat = TRUE, by Great Circle distance in kilometers. If `x` is an `"sf"` object and `use_s2=` is `TRUE`, spherical distances in km are used."
+
+```{r nb_distance}
+#creating a distance based neighbor object
+nb_dist <- dnearneigh(centroids, d1 = 0, d2 = 8046.72, #distance range is 0 miles (d1) to 5 miles (d2= 8046.72 meters), change distance (in meters) based on unique geography of the spatial units of analysis (i.e., a small city with few census tracts vs a big city with many census tracts)
+                      row.names = data$GEOID) #set row names to GEOIDs or any other unique identifier
+summary(nb_dist) #check to make sure output looks right and detect any isolates
+
+#create neighbor weight matrix:
+nbW_dist <- nb2listw(nb_dist, style="W", zero.policy = T) #set summary method with style. "W" = row standardized (sums over all links to n) #zero.policy= T, weights vectors of zero length are inserted for regions without neighbour in the neighbours list
+
+#visualize neighbor distance matrix
+plot(st_geometry(MAPS), border = "black", reset = FALSE) #visualize distance network over geography
+plot(nb_dist, coords = centroids, add=T, col = "red") #red lines indicate that census tracts are neighbors
+```
+
+# Spatial Auto-Correlation Methods
+
+## Moran's I
+
+Per spdep documentation:
+
+"A plot of spatial data against its spatially lagged values, augmented by reporting the summary of influence measures for the linear relationship between the data and the lag. If zero policy is TRUE, such observations are also marked if they occur."
+
+```{r moransI}
+#set lisw= to either adjacency or distance neighbor matrix (nbW or nb_dist)
+moran.plot(data$x, listw=nbw, zero.policy= T, xlab="Standardized Total x Prevalence", ylab="Neighbors Standardized Total x Prevalence",
+main=c("Moran Scatterplot for x", "in City") )
+```
+
+## Rao's Score (Lagrange Multiplier) Test for Spatial Dependence
+
+Per spdep documentation:
+
+"The function reports the estimates of tests chosen among five statistics for testing for spatial dependence in linear models. The statistics are the simple RS test for error dependence ("RSerr"), the simple RS test for a missing spatially lagged dependent variable ("RSlag"), variants of these adjusted for the presence of the other ("adjRSerr" tests for error dependence in the possible presence of a missing lagged dependent variable, "adjRSlag" the other way round), and a portmanteau test ("SARMA", in fact "RSerr" + "adjRSlag"). Note: from spdep 1.3-2, the tests are re-named "RS" - Rao's score tests, rather than "LM" - Lagrange multiplier tests to match the naming of tests from the same family in `SDM.RStests`."
+
+```{r rao_score}
+fit <- lm(y ~ x, data = data) #create lm object
+lm.LMtests(fit, nbw, zero.policy= T, test = "all", digits= 3) #set second term to either adjacency or distance neighbor matrix (nbW or nb_dist)
+```
+
+## Global Moran's I
+
+Per spdep documentation:
+
+"Moran's test for spatial autocorrelation using a spatial weights matrix in weights list form. The assumptions underlying the test are sensitive to the form of the graph of neighbour relationships and other factors, and results may be checked against those of `moran.mc` permutations.
+
+```{r global_moransI}
+moran.test(data$x, nbw, zero.policy = T) #set second term to either adjacency or distance neighbor matrix (nbW or nb_dist)
+```
+
+## Monte Carlo Simulation
+
+Per spdep documentation:
+
+"A permutation test for Moran's I statistic calculated by using nsim random permutations of x for the given spatial weighting scheme, to establish the rank of the observed statistic in relation to the nsim simulated values."
+
+```{r montecarlo}
+moran.mc(data$x, nbw, zero.policy= T, nsim=999) 
+#set second term to either adjacency or distance neighbor matrix (nbW or nb_dist)
+#set nsim to desired number of iterations
+```
+
+## Getis-Ord for Local Spatial Autocorrelation
+
+Per spdep documentation:
+
+"The local spatial statistic G is calculated for each zone based on the spatial weights object used. The value returned is a Z-value, and may be used as a diagnostic tool. High positive values indicate the posibility of a local cluster of high values of the variable being analysed, very low relative values a similar cluster of low values. For inference, a Bonferroni-type test is suggested in the references, where tables of critical values may be found (see also details below)."
+
+"The critical values of the statistic under assumptions given in the references for the 95th percentile are for n=1: 1.645, n=50: 3.083, n=100: 3.289, n=1000: 3.886."
+
+```{r getis_ord}
+localg <-localG(data$x, nbw, zero.policy =T) #run getis-ord measurement
+data <- data %>%
+        mutate(localg = as.numeric(localg)) 
+breaks <- c(min(data$x), -2.58, -1.96, -1.65, 1.65, 1.96, 2.58, max(data$x)) #establish two-tailed distribution breaks for later visualization using 99% and 95% confidence intervals
+self <- include.self(nb) #include neighbor list within itself
+w.self <- nb2listw(self, style="W", zero.policy = T) #create weighted matrix using self-inserted neighbor weight matrix
+
+#Running local getis-ord measurement for variable of interest
+localgstar<-localG(data$x,w.self) #change X to variable of interest
+data <- data %>%
+        mutate(localgstar = as.numeric(localgstar))
+data<- data %>% #set up legend for visualization
+       mutate(gcluster = cut(localgstar, breaks=breaks, include.lowest = TRUE, labels=c("Cold spot: 99% confidence", "Cold spot: 95% confidence", "Cold spot: 90% confidence", "Not significant","Hot spot: 90% confidence", "Hot spot: 95% confidence", "Hot spot: 99% confidence"))) 
+#visualizing
+tm_shape(data, unit = "mi") +
+  tm_polygons(col = "gcluster", title = "", palette = "-RdBu",
+              breaks = breaks) +
+  tm_layout(frame = F, main.title = "Total x Clusters",
+            legend.outside = T) 
+```
+
+## Local Moran's I
+
+Per spdep documentation:
+
+"The local spatial statistic Moran's I is calculated for each zone based on the spatial weights object used. The values returned include a Z-value, and may be used as a diagnostic tool. The statistic is:
+
+$$
+Ii=\frac{(x_i−\bar{x})}{\Sigma^n_{k=1}(x_k-\bar{x})^2/(n-1)}\Sigma^n_{j=1}w_{ij}(x_j-\bar{x})
+$$
+
+, and its expectation and variance were given in Anselin (1995), but those from Sokal et al. (1998) are implemented here."
+
+"The values of local Moran's I are divided by the variance (or sample variance) of the variable of interest to accord with Table 1, p. 103, and formula (12), p. 99, in Anselin (1995), rather than his formula (7), p. 98. The variance of the local Moran statistic is taken from Sokal et al. (1998) p. 334, equations 4 & 5 or equations 7 & 8 located depending on user specification. By default, the implementation divides by n, not (n-1) in calculating the variance and higher moments. Conditional code contributed by Jeff Sauer and Levi Wolf."
+
+```{r local_moransi}
+locali <-localmoran(data$x, nbw, zero.policy =T) #
+data <- data %>%
+              mutate(localmi19 = locali[,1], localz = locali[,4], zero.policy =T)
+breaksi <- c(min(data$x), -1.96, 1.96, max(data$x)) #establishing breaks based on 95% CI
+
+#visualizing
+data <- data %>%
+        mutate(mcluster = cut(localz, breaks = breaksi, labels = c("Negative Correlation", "Not Significant", "Positive Correlation"))) #Designating areas with Z-Scores greater than 1.96 and lower than -1.96 as high cluster areas and low cluster areas, respectively
+tm_shape(data, unit = "mi") +
+  tm_polygons(col = "mcluster", title = "", palette = "-RdBu",
+              breaks = breaksi) +
+    tm_layout(frame = F, main.title = "Total x Clusters",
+            legend.outside = T)
+```
+
+## Spatial Lag Error Model
+
+To detect spatial autocorrelation in various covariates of a model, first fit a spatial lag error model of the desired outcome variable and predictors. Significant variables indicate autocorrelation in the residuals. Thus, those variables need spatial lags created to control for the spatial autocorrelation occurring within the data.
+
+Per spatialreg documentation:
+
+"The `lagsarlm` function provides Maximum likelihood estimation of spatial simultaneous autoregressive lag and spatial Durbin (mixed) models of the form:
+
+$$
+y=ρWy+Xβ+ε
+$$
+
+where $p$ is found by `optimize()` first, and $\beta$ and other parameters by generalized least squares subsequently (one-dimensional search using optim performs badly on some platforms). In the spatial Durbin (mixed) model, the spatially lagged independent variables are added to X. Note that interpretation of the fitted coefficients should use impact measures, because of the feedback loops induced by the data generation process for this model. With one of the sparse matrix methods, larger numbers of observations can be handled, but the `interval=` argument may need be set when the weights are not row-standardised.
+
+Maximum likelihood estimation of spatial simultaneous autoregressive error models of the form:
+
+$$
+y=Xβ+u,u=λWu+ε
+$$
+
+where $\lambda$ is found by `optimize()` first, and $\beta$ and other parameters by generalized least squares subsequently. With one of the sparse matrix methods, larger numbers of observations can be handled, but the `interval=` argument may need be set when the weights are not row-standardised. When `etype` is \"emixed\", a so-called spatial Durbin error model is fitted.
+
+Maximum likelihood estimation of spatial simultaneous autoregressive \"SAC/SARAR\" models of the form:
+
+$$
+y=ρW1y+Xβ+u,u=λW2u+ε
+$$
+
+where $p$ and $\lambda$ are found by `nlminb` or `optim()` first, and $\beta$ and other parameters by generalized least squares subsequently.
+
+```{r lagerror}
+fit.err<-errorsarlm(y ~ x, data = data, listw = nbw, zero.policy = T) #fit lm object
+summary(fit.err) #view results
+```
+
+# Creating Spatial Lags
+
+If your variables of interest tested positive for spatial autocorrelation through the numerous spatial autocorrelation methods above, it is justified to create spatial lag control measures for your analytic model.
+
+```{r spatial_lag}
+data$x_lag <- lag.listw(nbw, data$x) #change nbw to nbw_dist if using distance based neighbors
+summary(data[, c("x_lag", "x")]) #compare normal variable of interest and its lagged version
+```
+
+# DON'T FORGET TO SAVE YOUR RESULTS!
+
+# References
+
+Bivand, R. (2022), R Packages for Analyzing Spatial Data: A Comparative Case Study with Areal Data. Geographical Analysis, 54(3), 488-518. [doi:10.1111/gean.12319](https://doi.org/10.1111/gean.12319)
+
+Bivand, R. S., Hauke, J., and Kossowski, T. (2013). Computing the Jacobian in Gaussian spatial autoregressive models: An illustrated comparison of available methods. *Geographical Analysis*, 45(2), 150-179.
