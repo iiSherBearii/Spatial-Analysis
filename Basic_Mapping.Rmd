@@ -1,0 +1,53 @@
+---
+title: "Mapping with tmap"
+author: "Sheridamae Bondoc Gudez, M.S."
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = F, message = T, warning = T, fig.keep = "as is")
+rm(list=ls()) #clear environment
+libraries <- c("tidyverse", "tidycensus", "sf", "tigris", "tmap", "knitr") #desired packages
+
+for (i in libraries){ #load packages
+  tryCatch(library(i, character.only = TRUE),
+           print(paste(i, "installed")),
+           error = function(e) {install.packages(i);
+             library(i, character.only = TRUE)}
+  )
+  print(paste(i, "loaded"))
+}
+options(tigris_class = "sf")
+options(scipen = 999)
+```
+
+# Pulling Spatial Data and Merging
+
+```{r include=FALSE}
+maps <- st_read("maps.shp", stringsAsFactors = FALSE) #read in shapefile. Change name for your own file.
+data <- read.csv("data.csv") #read in variables with GEOIDs if merging additional data.
+data_maps <- left_join(maps, data, by = "GEOID") #merge variables onto shapefile via GEOIDs 
+data_maps <- st_as_sf(data_maps) #ensure new database is a shapefile
+```
+
+# Basic Mapping
+
+```{r}
+tm_shape(data_maps, unit = "mi") + #sets up the main layer of the map
+tm_borders(alpha= 0.7) + #creates lines between units of analysis for better visual
+tm_fill(col = "x", #indicates the variable we are mapping
+            style = "quantile", #tells the code how we want the variables to be measured (i.e, "quantile", "hclust", "kmeans")
+            title="", #give a title to your legend
+            palette = "Blues", #tells R what color we want the map to be
+            border.alpha = 0.5, #adjusts the transparency of the lines for each color level in the legend
+            legend.reverse= T)  + #tells R we want the levels to be displayed in reverse, with highest breaks at the top
+tm_legend(legend.outside = F, #Makes the legend appear inside the map, not outside
+            position= c("right","top"), #Controls where the legend will be placed
+            #legend.outside.position= "bottom", #NOT RUN: allows you to adjust position of legend if you wanted it to be outside the map. If you want this, legend.outside must be set to TRUE
+            frame = T) + #Creates a bordered frame around the legend
+tm_layout(main.title = "title", #Places a title on the map
+          main.title.position = "center", #Tells R where we want the title to be placed 
+          asp = 0 #adjust aspect ratio of the map. 0 = default
+          ) 
+```
