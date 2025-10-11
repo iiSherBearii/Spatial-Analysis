@@ -1,0 +1,93 @@
+---
+title: "Clustering"
+author: "Sheridamae Gudez"
+date: "`r Sys.Date()`"
+output: html_document
+---
+*Set-Up*
+##Install packages and Read in Data##
+```{r warning=TRUE, include=FALSE}
+rm(list=ls())
+libraries <- c("tidyverse", "tidycensus", "tidygeocoder","sf", "tigris")
+
+for (i in libraries){
+  tryCatch(library(i, character.only = TRUE),
+           print(paste(i, "installed")),
+           error = function(e) {install.packages(i);
+             library(i, character.only = TRUE)}
+  )
+  print(paste(i, "loaded"))
+}
+options(scipen = 999)
+options(tigris_class = "sf")
+```
+
+```{r}
+variable <- read_csv("FILE_NAME.csv") #read in filtered data
+map <- read_sf("FILE_NAME.shp") 
+```
+
+*Creating Spatial boundries*
+###Pulling Lat Long###
+```{r}
+#Get centroids for each census tract
+cent <- st_centroid(map)
+# Extract latitude and longitude
+latitude <- st_coordinates(cent)[, 2]  # Index 2 corresponds to latitude
+longitude <- st_coordinates(cent)[, 1]  # Index 1 corresponds to longitude
+# Create a dataframe with latitude and longitude
+coords <- data.frame(Longitude = longitude, Latitude = latitude)
+#saving arr data as a sf object
+variable <- st_as_sf(variable, coords = c("long", "lat"), crs = st_crs(map))
+```
+##Joining arr to spatial arr boundries##
+```{r}
+# Spatially join the two spatial data frames based on the census tract boundaries
+variable <- st_join(variable, map, join = st_within)
+variable <- as.data.frame(variable) #save as arr
+variable <- subset(variable, !is.na(GEOID))
+variable <- variable %>%
+  select(GEOID)
+```
+
+*Clustering*
+###CLUSTERING CRIME DATA BY GEOID###
+```{r}
+# Cluster by GEOIDs/Variable of Interest (assuming you want to count occurrences of each GEOIDs/Variable of Interest)
+clustered_geoids <- variable %>%
+  group_by(GEOID) %>%
+  summarise(variable = n())
+
+#cluster multiple columns
+clustered_geoids <- variable %>%
+  group_by(GEOID) %>%
+  summarise(
+    variable = sum(arrlent == 1, na.rm = TRUE),    # Count of arrlent crimes where arrlent == 1
+    variable = sum(arrerty == 1, na.rm = TRUE)   # Count of arrerty crimes where arrerty == 1
+  )
+```
+###Saving###
+```{r}
+#checking distribution
+hist(clustered_geoids$variable,
+     col = "lightblue",  # Set the color of bars
+     border = "black",   # Set the color of the border
+     breaks = 20)        # Set the number of bins  
+
+```
+
+##Joining
+```{r}
+map <- left_join(map, clustered_geoids, by="GEOID")
+```
+
+```{r}
+write_sf(map,"FILE_NAME.shp", delete_layer = T)
+```
+
+
+```{r}
+variable <- as.data.frame(map) %>%
+  select(-geometry)
+write.csv(variable, "FILE_NAME.csv") 
+```
