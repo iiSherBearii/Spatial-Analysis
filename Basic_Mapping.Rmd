@@ -25,16 +25,12 @@ options(scipen = 999)
 # Pulling Spatial Data and Merging
 
 ```{r include=FALSE}
-maps <- st_read("maps.shp", stringsAsFactors = FALSE) #read in shapefile. Change name for your own file.
-data <- read.csv("data.csv") #read in variables with GEOIDs if merging additional data.
-data_maps <- left_join(maps, data, by = "GEOID") #merge variables onto shapefile via GEOIDs 
-data_maps <- st_as_sf(data_maps) #ensure new database is a shapefile
+maps <- st_read("city.map.shp", stringsAsFactors = FALSE) #read in shapefile. Change name for your own file.
 ```
 
 # Basic Mapping
-
 ```{r}
-tm_shape(data_maps, unit = "mi") + #sets up the main layer of the map
+map1 <- tm_shape(bounds, unit = "mi") + #sets up the main layer of the map
 tm_borders(alpha= 0.7) + #creates lines between units of analysis for better visual
 tm_fill(col = "x", #indicates the variable we are mapping
             style = "quantile", #tells the code how we want the variables to be measured (i.e, "quantile", "hclust", "kmeans")
@@ -50,4 +46,5 @@ tm_layout(main.title = "title", #Places a title on the map
           main.title.position = "center", #Tells R where we want the title to be placed 
           asp = 0 #adjust aspect ratio of the map. 0 = default
           ) 
+map1
 ```
