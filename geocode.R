@@ -23,7 +23,7 @@ for (i in libraries){
   print(paste(i, "loaded"))
 }
 
-census_api_key("40c2165602cdba501a3cb01d4b8962a6655cbc2f")
+census_api_key("insert_your_api_key_here")
 options(tigris_class = "sf")
 options(tidygeocoder.progress_bar = TRUE)
 
